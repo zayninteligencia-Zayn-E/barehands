@@ -347,6 +347,11 @@ class Handler(SimpleHTTPRequestHandler):
                         out["wave"] = w.get("samples", [])[:64]
                 except Exception:
                     pass
+            try:
+                out["captions"] = json.loads(
+                    (s_dir / "captions.json").read_text())
+            except Exception:
+                out["captions"] = []
             self._json(out)
             return
         if self.path == "/state":

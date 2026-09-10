@@ -229,6 +229,20 @@ SPDX-License-Identifier: AGPL-3.0-or-later
   #debug { position:absolute; top:12px; left:12px; z-index:998; display:none;
            background:rgba(0,0,0,0.65); color:#8ff0e4; padding:10px 12px;
            border-radius:8px; font:12px "SF Mono",Menlo,monospace; white-space:pre; }
+  /* subtitle panel — small readable box, bottom-left, so the terminal
+     window never has to sit on top of the board to follow the chat */
+  #captions { position:absolute; left:16px; bottom:16px; z-index:998;
+              width:min(360px, 40vw); max-height:34vh; overflow:hidden;
+              background:rgba(10,10,10,0.62); border:1px solid rgba(201,169,110,0.35);
+              border-radius:10px; padding:10px 12px; backdrop-filter:blur(6px);
+              font:12px/1.5 -apple-system,sans-serif; color:rgba(250,248,240,0.92);
+              display:flex; flex-direction:column; gap:4px; pointer-events:none; }
+  #captions:empty { display:none; }
+  #captions .cap-who { color:#c9a96e; font:700 10px "SF Mono",Menlo,monospace;
+                        letter-spacing:0.06em; margin-right:6px; }
+  #captions .cap-line.you .cap-who { color:#78cdfa; }
+  #captions .cap-line { opacity:0.55; }
+  #captions .cap-line:last-child { opacity:1; }
   /* GLASS ERA: the item layer is a real 3D SPACE — every card, panel,
      and widget can rotate in Z (hold-latch); default pose is flat.
      (The 8/11 depth-mask person-segmenter that masked this layer was
@@ -287,6 +301,7 @@ setTimeout(function () {
 <div id="boot">BAREHANDS<br><span style="color:#a8d8cf;font-size:12px;letter-spacing:0.22em">by jaredrhod</span><br><span style="color:#a8d8cf;font-size:13px">loading hand tracker… allow the camera when asked</span></div>
 <div id="hint">tap the RING = orbs · tap an orb = its tree · TAP a card = open · pinch-drag = move · hold still ~1s = 3D rotate · two hands = scale · TAP an open item = close · CLAP (palms together, fingers up) = ring center-stage · CLAW: flash open, claw, aim, hold the strain 2s, SNAP = force pull · empty pinch dragged sideways = explode scrub · R respawn / C camera / D debug</div>
 <div id="debug"></div>
+<div id="captions"></div>
 <div id="toast"></div>
 
 <script type="module">
@@ -447,18 +462,37 @@ function summonWidget(w) {
 const RING = {
   data: { state: "idle", mood: "green", wave: null }, amp: 0, gmax: 1,
   live: 0,
-  // palette eyedropped from the design reference (exact reference
-  // colors, SUBTLE state shifts — a deep-blue listening state was
-  // unreadable and died)
-  COLS: { idle: [140, 235, 240], listening: [120, 205, 250],
-          thinking: [170, 245, 250], speaking: [140, 235, 240] },
+  // Planmetary Intelligence rebrand (black + warm gold). listening
+  // STAYS BLUE on purpose — that's the accessibility cue, not a
+  // color choice ("a deep-blue listening state was unreadable and
+  // died" — the ORIGINAL note about touching this one). Everything
+  // else moved to the brand's warm gold/cream.
+  COLS: { idle: [201, 169, 110], listening: [120, 205, 250],
+          thinking: [226, 196, 143], speaking: [57, 255, 140] },
   MOODT: { red: [255, 82, 82], amber: [255, 179, 71], green: null },
 };
+const EMBER = new Image();
+EMBER.src = "media/fx/gold-ember-burst.png";
+const CAPTIONS_EL = document.getElementById("captions");
+let lastCaptionsKey = "";
+function renderCaptions(list) {
+  if (!CAPTIONS_EL || !Array.isArray(list)) return;
+  const key = list.map(c => c.ts).join(",");
+  if (key === lastCaptionsKey) return;    // skip redundant DOM churn
+  lastCaptionsKey = key;
+  CAPTIONS_EL.innerHTML = list.map(c => {
+    const cls = c.who === "you" ? "you" : "them";
+    return `<div class="cap-line ${cls}"><span class="cap-who">${escT((c.who || "").toUpperCase())}</span>${escT(c.text || "")}</div>`;
+  }).join("");
+}
 setInterval(async () => {
   if (!RING.live) return;               // poll only while a ring is up
   try {
     const r = await fetch("/orb", { cache: "no-store" });
-    if (r.ok) RING.data = await r.json();
+    if (r.ok) {
+      RING.data = await r.json();
+      renderCaptions(RING.data.captions);
+    }
   } catch (e) {}
 }, 120);
 
@@ -525,12 +559,14 @@ function drawRing(sc) {
   const tint = RING.MOODT[d.mood];
   const c = tint ? base.map((v, i) => Math.round(v * 0.35 + tint[i] * 0.65))
                  : base;
-  // v4: SPEAKING = the band burns toward HOT WHITE on the live voice
+  // v4: SPEAKING = the band burns toward a hot neon-green-white on
+  // the live voice (2026-08-26: neon green speaking state)
   const wp = st === "speaking" ? amp : 0;
-  const bc = c.map((v, i) => Math.round(v + ([235, 250, 252][i] - v) * wp));
+  const burnTo = st === "speaking" ? [180, 255, 170] : [250, 250, 245];
+  const bc = c.map((v, i) => Math.round(v + (burnTo[i] - v) * wp));
   const col = a => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
   const band = a => `rgba(${bc[0]},${bc[1]},${bc[2]},${a})`;
-  const hot = a => `rgba(228,250,252,${a})`;    // the white-hot rim
+  const hot = a => `rgba(252,244,225,${a})`;    // the warm-white-hot rim
   const x = sc.ctx;
   ensureRingRes(sc);                    // the pixelation fix (round 4)
   const tap = Math.exp(-Math.max(0, t - sc.tapT) * 4);
@@ -540,6 +576,18 @@ function drawRing(sc) {
   x.clearRect(0, 0, 440, 440);
   x.save();
   x.translate(220, 220);
+  // the gold ember burst — an aura that blooms behind the band while
+  // speaking, riding the same live-voice amplitude as the burn-white
+  // pulse. 'screen' blend so the burst's black background contributes
+  // nothing; only its light adds on top.
+  if (wp > 0.02 && EMBER.complete && EMBER.naturalWidth) {
+    x.save();
+    x.globalCompositeOperation = "screen";
+    x.globalAlpha = wp * 0.8;
+    const es = 420;
+    x.drawImage(EMBER, -es / 2, -es / 2, es, es);
+    x.restore();
+  }
   x.shadowColor = band(0.95);
   // THE BAND — ONE solid piece, perfectly still — it PULSES HOT
   // WHITE while the assistant speaks, riding the live waveform
@@ -596,7 +644,7 @@ function drawRing(sc) {
   // wordmark + status — sized UP (round 4: the clear core has room);
   // dark halo shadow keeps them readable over live video
   x.shadowColor = "rgba(2,10,10,0.9)"; x.shadowBlur = 7;
-  x.fillStyle = `rgba(235,250,250,${0.94 + wp * 0.06})`;
+  x.fillStyle = `rgba(250,248,240,${0.94 + wp * 0.06})`;
   const nm = (CFG.name || "ASSISTANT").toUpperCase();
   const fpx = nm.length <= 6 ? 27 : nm.length <= 9 ? 20 : 14;
   x.font = `700 ${fpx}px 'SF Mono', Menlo, monospace`;
